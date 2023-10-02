@@ -46,7 +46,7 @@ run_sequential: purge sequential
 	./sequential
 
 run_parallel: purge parallel
-	mpirun -np 4 ./parallel
+	mpirun -np 4 --oversubscribe ./parallel
 
 check_sequential: purge sequential
 	./check/check_sequential_solution.sh

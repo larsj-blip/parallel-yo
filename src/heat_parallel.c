@@ -32,9 +32,9 @@ real_t
     *thermal_diffusivity,
     dt;
 
-#define T(x, y) temp[0][(y) * (columns_in_subgrid + 2) + (x)]
-#define T_next(x, y) temp[1][((y) * (columns_in_subgrid + 2) + (x))]
-#define THERMAL_DIFFUSIVITY(x, y) thermal_diffusivity[(y) * (columns_in_subgrid + 2) + (x)]
+#define T(x, y) temp[0][(y) * (local_M + 2) + (x)]
+#define T_next(x, y) temp[1][((y) * (local_M + 2) + (x))]
+#define THERMAL_DIFFUSIVITY(x, y) thermal_diffusivity[(y) * (local_M + 2) + (x)]
 
 void time_step(void);
 void boundary_condition(void);
@@ -47,8 +47,8 @@ int rank,
     amount_of_processes,
     dimensions[2] = {0, 0}, // letting mpi set this
     communicator_should_not_periodisize[2] = {0, 0},
-    columns_in_subgrid,
-    rows_in_subgrid;
+    local_N,
+    local_M;
 
 MPI_Comm cartesian_communicator;
 
@@ -109,6 +109,7 @@ int main(int argc, char **argv)
     {
         // TODO 6: Implement border exchange.
         // Hint: Creating MPI datatypes for rows and columns might be useful.
+        border_exchange();
 
         boundary_condition();
 
@@ -145,9 +146,9 @@ void time_step(void)
     // TODO 3: Update the area of iteration so that each
     // process only iterates over its own subgrid.
 
-    for (int_t y = 1; y <= rows_in_subgrid; y++)
+    for (int_t y = 1; y <= local_M; y++)
     {
-        for (int_t x = 1; x <= columns_in_subgrid; x++)
+        for (int_t x = 1; x <= local_N; x++)
         {
             c = T(x, y);
 
@@ -166,89 +167,59 @@ void time_step(void)
 
 void border_exchange(void)
 {
+    MPI_Datatype column, row;
+    #define indexing_address_T(x,y) (y) * (local_M + 2) + (x)
     int left_node, right_node, up_node, down_node;
     MPI_Cart_shift(cartesian_communicator,
                    0,
                    1,
-                   &up_node,
-                   &down_node);
+                   &left_node,
+                   &right_node);
     MPI_Cart_shift(cartesian_communicator,
                    1,
                    1,
-                   &right_node,
-                   &left_node);
-    MPI_Sendrecv(temp[0] + (rows_in_subgrid + 2),
-                 rows_in_subgrid + 2,
-                 MPI_DOUBLE,
+                   &down_node,
+                   &up_node);
+
+    MPI_Type_vector(local_M+2, 1, 0, MPI_DOUBLE, &row);
+    MPI_Type_commit(&row);
+    MPI_Sendrecv(temp[0] + indexing_address_T(0,1),
+                 1,
+                 row,
                  down_node,
                  0,
-                 temp[0] + (rows_in_subgrid + 2) * (columns_in_subgrid + 1),
-                 rows_in_subgrid + 2,
-                 MPI_DOUBLE,
+                 temp[0] + indexing_address_T(0, local_N+1),
+                 1,
+                 row,
                  up_node,
                  0,
                  cartesian_communicator,
                  MPI_STATUS_IGNORE);
 
-    MPI_Sendrecv(temp[0] + (rows_in_subgrid + 2) * (columns_in_subgrid),
-                 rows_in_subgrid + 2,
-                 MPI_DOUBLE,
+    MPI_Sendrecv(temp[0] + indexing_address_T(0, local_N),
+                 1,
+                 row,
                  up_node,
                  1,
                  temp[0], 
-                 rows_in_subgrid, 
-                 MPI_DOUBLE, 
+                 1, 
+                 row, 
                  down_node, 
                  1, 
                  cartesian_communicator, 
                  MPI_STATUS_IGNORE);
 
-    real_t receive_buffer_left[rows_in_subgrid];
-    real_t receive_buffer_right[rows_in_subgrid];
-    real_t send_buffer_right[rows_in_subgrid];
-    real_t send_buffer_left[rows_in_subgrid];
+    MPI_Type_vector(local_N+2, 1, local_M+2, MPI_DOUBLE, &column);
+    MPI_Type_commit(&column);
 
-    for (int index = 0; index < rows_in_subgrid; index++)
-    {
-        send_buffer_left[index] = T(1, index + 1);
-    }
-    for (int index = 0; index < rows_in_subgrid; index++)
-    {
-        send_buffer_right[index] = T(columns_in_subgrid, index + 1);
-    }
-    MPI_Sendrecv(send_buffer_left, 
-    rows_in_subgrid, 
-    MPI_DOUBLE, 
-    left_node, 
-    3, 
-    receive_buffer_right, 
-    rows_in_subgrid, 
-    MPI_DOUBLE, 
-    right_node, 
-    3, 
-    cartesian_communicator, 
-    MPI_STATUS_IGNORE);
-    MPI_Sendrecv(send_buffer_right, 
-    rows_in_subgrid, 
-    MPI_DOUBLE, 
-    right_node, 
-    4, 
-    receive_buffer_left, 
-    rows_in_subgrid, 
-    MPI_DOUBLE, 
-    left_node, 
-    4, 
-    cartesian_communicator, 
-    MPI_STATUS_IGNORE);
-    for (int index = 0; index < rows_in_subgrid; index++)
-    {
-        T(0, index) = receive_buffer_left[index] ;
-    }
-    for (int index = 0; index < rows_in_subgrid; index++)
-    {
-        T(columns_in_subgrid+1, index+1) = receive_buffer_right[index];
-    }
-}
+
+        MPI_Sendrecv(temp[0] + local_M, 1, column, right_node, 2, temp[0], 1, column, left_node, 2, 
+        cartesian_communicator, MPI_STATUS_IGNORE);
+        MPI_Sendrecv(temp[0]+1 , 1, column, left_node, 3, temp[0]+local_M+1, 1, column, right_node, 3, 
+        cartesian_communicator, MPI_STATUS_IGNORE);
+
+        
+}       
 
 void boundary_condition(void)
 {
@@ -262,39 +233,39 @@ void boundary_condition(void)
     MPI_Cart_shift(cartesian_communicator,
                    0,
                    1,
-                   &up_node,
-                   &down_node);
+                   &left_node,
+                   &right_node);
 
     MPI_Cart_shift(cartesian_communicator,
                    1,
                    1,
-                   &right_node,
-                   &left_node);
+                   &down_node,
+                   &up_node);
 
     if (left_node == MPI_PROC_NULL)
     {
-        for (int_t y = 1; y <= rows_in_subgrid; y++)
+        for (int_t y = 1; y <= local_M; y++)
         {
             T(0, y) = T(2, y);
         }
     }
     if (right_node == MPI_PROC_NULL)
     {
-        for (int_t y = 1; y <= rows_in_subgrid; y++)
+        for (int_t y = 1; y <= local_M; y++)
         {
-            T(columns_in_subgrid + 1, y) = T(columns_in_subgrid - 1, y);
+            T(local_N + 1, y) = T(local_N - 1, y);
         }
     }
     if (up_node == MPI_PROC_NULL)
     {
-        for (int_t x = 1; x <= columns_in_subgrid; x++)
+        for (int_t x = 1; x <= local_N; x++)
         {
-            T(x, rows_in_subgrid + 1) = T(x, rows_in_subgrid - 1);
+            T(x, local_M + 1) = T(x, local_M - 1);
         }
     }
     if (down_node == MPI_PROC_NULL)
     {
-        for (int_t x = 1; x <= columns_in_subgrid; x++)
+        for (int_t x = 1; x <= local_N; x++)
         {
             T(x, 0) = T(x, 2);
         }
@@ -314,20 +285,20 @@ void domain_init(void)
         offset_M,
         offset_N;
     MPI_Cart_coords(cartesian_communicator, rank, 2, location_in_grid);
-    rows_in_subgrid = M / dimensions[0];
-    columns_in_subgrid = N / dimensions[1];
-    offset_M = rows_in_subgrid * location_in_grid[0];
-    offset_N = columns_in_subgrid * location_in_grid[1];
+    local_M = M / dimensions[0];
+    local_N = N / dimensions[1];
+    offset_M = local_M * location_in_grid[0];
+    offset_N = local_N * location_in_grid[1];
 
-    temp[0] = malloc((rows_in_subgrid + 2) * (columns_in_subgrid + 2) * sizeof(real_t));
-    temp[1] = malloc((rows_in_subgrid + 2) * (columns_in_subgrid + 2) * sizeof(real_t));
-    thermal_diffusivity = malloc((rows_in_subgrid + 2) * (columns_in_subgrid + 2) * sizeof(real_t));
+    temp[0] = malloc((local_M + 2) * (local_N + 2) * sizeof(real_t));
+    temp[1] = malloc((local_M + 2) * (local_N + 2) * sizeof(real_t));
+    thermal_diffusivity = malloc((local_M + 2) * (local_N + 2) * sizeof(real_t));
 
     dt = 0.1;
 
-    for (int_t y = 1; y <= rows_in_subgrid; y++)
+    for (int_t y = 1; y <= local_M; y++)
     {
-        for (int_t x = 1; x <= columns_in_subgrid; x++)
+        for (int_t x = 1; x <= local_N; x++)
         {
             real_t temperature = 30 + 30 * sin(((x + offset_N) + (y + offset_M)) / 20.0);
             real_t diffusivity = 0.05 + (30 + 30 * sin((N - (x + offset_N) + (y + offset_M)) / 20.0)) / 605.0;
@@ -343,27 +314,27 @@ void domain_save(int_t iteration)
 {
     // TODO 5: Use MPI I/O to save the state of the domain to file.
     // Hint: Creating MPI datatypes might be useful.
-
     int location_in_grid[2],
         offset_M,
         offset_N;
-    real_t *output_buffer = NULL;
-    output_buffer = malloc(rows_in_subgrid * columns_in_subgrid * sizeof(real_t));
-
-#define output_buffer_index(x, y) output_buffer[(y) * (columns_in_subgrid) + (x)]
-
-    for (int_t y = 1; y <= rows_in_subgrid; y++)
-    {
-        for (int_t x = 1; x <= columns_in_subgrid; x++)
-        {
-            output_buffer_index(x - 1, y - 1) = T(x, y);
-        }
-    }
 
     MPI_Cart_coords(cartesian_communicator, rank, 2, location_in_grid);
     printf("%d, %d", location_in_grid[1], location_in_grid[0]);
-    offset_M = rows_in_subgrid * location_in_grid[0];
-    offset_N = columns_in_subgrid * location_in_grid[1];
+    offset_M = local_M * location_in_grid[0];
+    offset_N = local_N * location_in_grid[1];
+
+    int global_size[2] = {M, N};
+    int local_size[2] = {local_M, local_N};
+    int local_origin[2] = {offset_M, offset_N};
+    int local_size_with_halo[2] = {local_M + 2, local_N + 2};
+    int origin_for_values_within_halo[2] = {1,1};
+
+    MPI_Datatype values_without_halo;
+    MPI_Type_create_subarray(
+        2, local_size_with_halo, local_size, origin_for_values_within_halo,
+        MPI_ORDER_C, MPI_DOUBLE, &values_without_halo);
+    MPI_Type_commit(&values_without_halo);
+
 
     int_t index = iteration / snapshot_frequency;
     char filename[256];
@@ -373,12 +344,9 @@ void domain_save(int_t iteration)
 
     MPI_File file;
 
-    int global_size[2] = {M, N};
-    int local_size[2] = {rows_in_subgrid, columns_in_subgrid};
-    int local_origin[2] = {offset_M, offset_N};
 
-    MPI_Type_contiguous((rows_in_subgrid) * (columns_in_subgrid), MPI_DOUBLE, &custom_data_type);
-    MPI_Type_commit(&custom_data_type);
+    // MPI_Type_contiguous((local_M) * (local_N), values_without_halo, &custom_data_type);
+    // MPI_Type_commit(&custom_data_type);
 
     MPI_Type_create_subarray(
         2, global_size, local_size, local_origin,
@@ -394,8 +362,9 @@ void domain_save(int_t iteration)
 
     MPI_File_set_view(
         file, 0, MPI_DOUBLE, writable_area, "native", MPI_INFO_NULL);
+
     MPI_File_write_all(
-        file, output_buffer, 1, custom_data_type, MPI_STATUS_IGNORE);
+        file, temp[0], 1, values_without_halo, MPI_STATUS_IGNORE);
 
     MPI_File_close(&file);
 }
