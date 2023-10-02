@@ -15,7 +15,8 @@
 
 typedef int64_t int_t;
 typedef double real_t;
-typedef struct {
+typedef struct
+{
     int x, y, subgrid_row_size, subgrid_column_size;
     real_t value;
 } subgrid;
@@ -176,25 +177,77 @@ void border_exchange(void)
                    1,
                    &right_node,
                    &left_node);
-    MPI_Sendrecv(temp[0] + columns_in_subgrid + 2,  columns_in_subgrid, MPI_DOUBLE, down_node, 0,
-    temp[0] + (columns_in_subgrid+2) *( rows_in_subgrid+1), columns_in_subgrid,MPI_DOUBLE,   up_node, 0, cartesian_communicator, MPI_STATUS_IGNORE);
+    MPI_Sendrecv(temp[0] + (rows_in_subgrid + 2),
+                 rows_in_subgrid + 2,
+                 MPI_DOUBLE,
+                 down_node,
+                 0,
+                 temp[0] + (rows_in_subgrid + 2) * (columns_in_subgrid + 1),
+                 rows_in_subgrid + 2,
+                 MPI_DOUBLE,
+                 up_node,
+                 0,
+                 cartesian_communicator,
+                 MPI_STATUS_IGNORE);
 
-    MPI_Sendrecv(temp[0] + (columns_in_subgrid+2) *( rows_in_subgrid), columns_in_subgrid+2, MPI_DOUBLE, up_node, 0,
-    temp[0], columns_in_subgrid, MPI_DOUBLE, down_node, 0, cartesian_communicator, MPI_STATUS_IGNORE );
-    
+    MPI_Sendrecv(temp[0] + (rows_in_subgrid + 2) * (columns_in_subgrid),
+                 rows_in_subgrid + 2,
+                 MPI_DOUBLE,
+                 up_node,
+                 1,
+                 temp[0], 
+                 rows_in_subgrid, 
+                 MPI_DOUBLE, 
+                 down_node, 
+                 1, 
+                 cartesian_communicator, 
+                 MPI_STATUS_IGNORE);
+
     real_t receive_buffer_left[rows_in_subgrid];
     real_t receive_buffer_right[rows_in_subgrid];
     real_t send_buffer_right[rows_in_subgrid];
-    real_t send_buffer_left[rows_in_subgrid];   
+    real_t send_buffer_left[rows_in_subgrid];
 
-    for (int index = 0; index  < rows_in_subgrid; index++) {
-        send_buffer_left[index] = T(1, index+1);
+    for (int index = 0; index < rows_in_subgrid; index++)
+    {
+        send_buffer_left[index] = T(1, index + 1);
     }
-    for (int index = 0; index  < rows_in_subgrid; index++) {
-        send_buffer_right[index] = T(columns_in_subgrid, index+1);
+    for (int index = 0; index < rows_in_subgrid; index++)
+    {
+        send_buffer_right[index] = T(columns_in_subgrid, index + 1);
     }
-    MPI_Sendrecv( send_buffer_left, rows_in_subgrid,MPI_DOUBLE , left_node ,0 , receive_buffer_right , rows_in_subgrid, MPI_DOUBLE, right_node, 0 , cartesian_communicator, MPI_STATUS_IGNORE);
-    MPI_Sendrecv( send_buffer_right, rows_in_subgrid,MPI_DOUBLE , right_node ,0 , receive_buffer_left , rows_in_subgrid, MPI_DOUBLE, left_node, 0 , cartesian_communicator, MPI_STATUS_IGNORE);
+    MPI_Sendrecv(send_buffer_left, 
+    rows_in_subgrid, 
+    MPI_DOUBLE, 
+    left_node, 
+    3, 
+    receive_buffer_right, 
+    rows_in_subgrid, 
+    MPI_DOUBLE, 
+    right_node, 
+    3, 
+    cartesian_communicator, 
+    MPI_STATUS_IGNORE);
+    MPI_Sendrecv(send_buffer_right, 
+    rows_in_subgrid, 
+    MPI_DOUBLE, 
+    right_node, 
+    4, 
+    receive_buffer_left, 
+    rows_in_subgrid, 
+    MPI_DOUBLE, 
+    left_node, 
+    4, 
+    cartesian_communicator, 
+    MPI_STATUS_IGNORE);
+    for (int index = 0; index < rows_in_subgrid; index++)
+    {
+        T(0, index) = receive_buffer_left[index] ;
+    }
+    for (int index = 0; index < rows_in_subgrid; index++)
+    {
+        T(columns_in_subgrid+1, index+1) = receive_buffer_right[index];
+    }
 }
 
 void boundary_condition(void)
@@ -263,9 +316,8 @@ void domain_init(void)
     MPI_Cart_coords(cartesian_communicator, rank, 2, location_in_grid);
     rows_in_subgrid = M / dimensions[0];
     columns_in_subgrid = N / dimensions[1];
-    offset_M = rows_in_subgrid * location_in_grid[1];
-    offset_N = columns_in_subgrid * location_in_grid[0];
-
+    offset_M = rows_in_subgrid * location_in_grid[0];
+    offset_N = columns_in_subgrid * location_in_grid[1];
 
     temp[0] = malloc((rows_in_subgrid + 2) * (columns_in_subgrid + 2) * sizeof(real_t));
     temp[1] = malloc((rows_in_subgrid + 2) * (columns_in_subgrid + 2) * sizeof(real_t));
@@ -278,7 +330,7 @@ void domain_init(void)
         for (int_t x = 1; x <= columns_in_subgrid; x++)
         {
             real_t temperature = 30 + 30 * sin(((x + offset_N) + (y + offset_M)) / 20.0);
-            real_t diffusivity = 0.05 + (30 + 30 * sin((columns_in_subgrid - (x + offset_N) + (y + offset_M)) / 20.0)) / 605.0;
+            real_t diffusivity = 0.05 + (30 + 30 * sin((N - (x + offset_N) + (y + offset_M)) / 20.0)) / 605.0;
 
             T(x, y) = temperature;
             T_next(x, y) = temperature;
@@ -296,23 +348,22 @@ void domain_save(int_t iteration)
         offset_M,
         offset_N;
     real_t *output_buffer = NULL;
-    output_buffer = malloc(rows_in_subgrid*columns_in_subgrid*sizeof(real_t));
+    output_buffer = malloc(rows_in_subgrid * columns_in_subgrid * sizeof(real_t));
 
-    #define output_buffer_index(x, y) output_buffer[(y) * (columns_in_subgrid) + (x)]
+#define output_buffer_index(x, y) output_buffer[(y) * (columns_in_subgrid) + (x)]
 
     for (int_t y = 1; y <= rows_in_subgrid; y++)
     {
         for (int_t x = 1; x <= columns_in_subgrid; x++)
         {
-            output_buffer_index(x-1, y-1) = T(x,y);
+            output_buffer_index(x - 1, y - 1) = T(x, y);
         }
     }
 
-
     MPI_Cart_coords(cartesian_communicator, rank, 2, location_in_grid);
-    printf("%d, %d",location_in_grid[0], location_in_grid[1]);
-    offset_M = rows_in_subgrid * location_in_grid[1];
-    offset_N = columns_in_subgrid * location_in_grid[0];
+    printf("%d, %d", location_in_grid[1], location_in_grid[0]);
+    offset_M = rows_in_subgrid * location_in_grid[0];
+    offset_N = columns_in_subgrid * location_in_grid[1];
 
     int_t index = iteration / snapshot_frequency;
     char filename[256];
@@ -320,43 +371,33 @@ void domain_save(int_t iteration)
     sprintf(filename, "data/%.5ld.bin", index);
     int mode = MPI_MODE_CREATE | MPI_MODE_WRONLY;
 
-
     MPI_File file;
-
 
     int global_size[2] = {M, N};
     int local_size[2] = {rows_in_subgrid, columns_in_subgrid};
-    int local_origin[2] = {offset_M , offset_N};
+    int local_origin[2] = {offset_M, offset_N};
 
-
-    MPI_Type_contiguous((rows_in_subgrid)*(columns_in_subgrid), MPI_DOUBLE, &custom_data_type);
+    MPI_Type_contiguous((rows_in_subgrid) * (columns_in_subgrid), MPI_DOUBLE, &custom_data_type);
     MPI_Type_commit(&custom_data_type);
-
 
     MPI_Type_create_subarray(
         2, global_size, local_size, local_origin,
-     MPI_ORDER_C, MPI_DOUBLE, &writable_area
-     );
-    MPI_Type_commit (&writable_area);
+        MPI_ORDER_C, MPI_DOUBLE, &writable_area);
+    MPI_Type_commit(&writable_area);
 
-
-    if ( MPI_File_open( cartesian_communicator ,filename , mode , MPI_INFO_NULL , &file) != MPI_SUCCESS)
-       {
+    if (MPI_File_open(cartesian_communicator, filename, mode, MPI_INFO_NULL, &file) != MPI_SUCCESS)
+    {
         printf("[MPI process %d] Failure in opening the file.\n", rank);
 
         MPI_Abort(cartesian_communicator, EXIT_FAILURE);
     }
 
     MPI_File_set_view(
-        file, 0, MPI_DOUBLE, writable_area, "native", MPI_INFO_NULL
-    );
-    MPI_File_write_all (
-        file, output_buffer, 1, custom_data_type, MPI_STATUS_IGNORE
-    );
+        file, 0, MPI_DOUBLE, writable_area, "native", MPI_INFO_NULL);
+    MPI_File_write_all(
+        file, output_buffer, 1, custom_data_type, MPI_STATUS_IGNORE);
 
     MPI_File_close(&file);
-
-
 }
 
 void domain_finalize(void)
