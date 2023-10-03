@@ -15,8 +15,8 @@ typedef int64_t int_t;
 typedef double real_t;
 
 int_t
-    M,
-    N,
+    global_rows,
+    global_columns,
     max_iteration,
     snapshot_frequency;
 
@@ -57,8 +57,8 @@ main ( int argc, char **argv )
         exit(1);
     }
 
-    M = options->M;
-    N = options->N;
+    global_rows = options->M;
+    global_columns = options->N;
     max_iteration = options->max_iteration;
     snapshot_frequency = options->snapshot_frequency;
 
@@ -104,9 +104,9 @@ time_step ( void )
 {
     real_t c, t, b, l, r, K, new_value;
 
-    for ( int_t y = 1; y <= M; y++ )
+    for ( int_t y = 1; y <= global_rows; y++ )
     {
-        for ( int_t x = 1; x <= N; x++ )
+        for ( int_t x = 1; x <= global_columns; x++ )
         {
             c = T(x, y);
 
@@ -127,16 +127,16 @@ time_step ( void )
 void
 boundary_condition ( void )
 {
-    for ( int_t x = 1; x <= N; x++ )
+    for ( int_t x = 1; x <= global_columns; x++ )
     {
         T(x, 0) = T(x, 2);
-        T(x, M+1) = T(x, M-1);
+        T(x, global_rows+1) = T(x, global_rows-1);
     }
 
-    for ( int_t y = 1; y <= M; y++ )
+    for ( int_t y = 1; y <= global_rows; y++ )
     {
         T(0, y) = T(2, y);
-        T(N+1, y) = T(N-1, y);
+        T(global_columns+1, y) = T(global_columns-1, y);
     }
 }
 
@@ -144,18 +144,18 @@ boundary_condition ( void )
 void
 domain_init ( void )
 {
-    temp[0] = malloc ( (M+2)*(N+2) * sizeof(real_t) );
-    temp[1] = malloc ( (M+2)*(N+2) * sizeof(real_t) );
-    thermal_diffusivity = malloc ( (M+2)*(N+2) * sizeof(real_t) );
+    temp[0] = malloc ( (global_rows+2)*(global_columns+2) * sizeof(real_t) );
+    temp[1] = malloc ( (global_rows+2)*(global_columns+2) * sizeof(real_t) );
+    thermal_diffusivity = malloc ( (global_rows+2)*(global_columns+2) * sizeof(real_t) );
 
     dt = 0.1;
 
-    for ( int_t y = 1; y <= M; y++ )
+    for ( int_t y = 1; y <= global_rows; y++ )
     {
-        for ( int_t x = 1; x <= N; x++ )
+        for ( int_t x = 1; x <= global_columns; x++ )
         {
             real_t temperature = 30 + 30 * sin((x + y) / 20.0);
-            real_t diffusivity = 0.05 + (30 + 30 * sin((N - x + y) / 20.0)) / 605.0;
+            real_t diffusivity = 0.05 + (30 + 30 * sin((global_columns - x + y) / 20.0)) / 605.0;
 
             T(x,y) = temperature;
             T_next(x,y) = temperature;
@@ -178,9 +178,9 @@ domain_save ( int_t iteration )
         fprintf(stderr, "Failed to open file: %s\n", filename);
         exit(1);
     }
-    for ( int_t iter = 1; iter <= N; iter++)
+    for ( int_t iter = 1; iter <= global_columns; iter++)
     {
-        fwrite( temp[0] + (M+2) * iter + 1, sizeof(real_t), N, out );
+        fwrite( temp[0] + (global_rows+2) * iter + 1, sizeof(real_t), global_columns, out );
     }
     fclose ( out );
 }
