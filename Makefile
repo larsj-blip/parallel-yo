@@ -36,6 +36,7 @@ clean:
 
 purge:
 	-rm -f sequential parallel $(DATA) $(PLOTS) $(VIDEO)
+all: parallel
 
 setup:
 	-mkdir -p data plots video

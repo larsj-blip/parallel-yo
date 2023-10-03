@@ -48,7 +48,8 @@ int rank,
     dimensions[2] = {0, 0}, // letting mpi set this
     communicator_should_not_periodisize[2] = {0, 0},
     local_N,
-    local_M;
+    local_M,
+    location_in_grid[2];
 
 MPI_Comm cartesian_communicator;
 
@@ -98,9 +99,9 @@ int main(int argc, char **argv)
     MPI_Bcast(&max_iteration, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&snapshot_frequency, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Dims_create(amount_of_processes, 2, dimensions);
-    MPI_Cart_create(MPI_COMM_WORLD, 2, dimensions, communicator_should_not_periodisize, 0, &cartesian_communicator);
-
+    MPI_Cart_create(MPI_COMM_WORLD, 2, dimensions, communicator_should_not_periodisize, 1, &cartesian_communicator);
     domain_init();
+    printf("dimensions: %d, %d", dimensions[0], dimensions[1]);
 
     struct timeval t_start, t_end;
     gettimeofday(&t_start, NULL);
@@ -168,30 +169,34 @@ void time_step(void)
 void border_exchange(void)
 {
     MPI_Datatype column, row;
-    #define indexing_address_T(x,y) (y) * (local_M + 2) + (x)
+//real_t before = T(1, local_N +1);
+#define indexing_address_T(x, y) (y) * (local_M + 2) + (x)
     int left_node, right_node, up_node, down_node;
     MPI_Cart_shift(cartesian_communicator,
                    0,
                    1,
-                   &left_node,
-                   &right_node);
+                   &up_node,
+                   &down_node);
     MPI_Cart_shift(cartesian_communicator,
                    1,
                    1,
-                   &down_node,
-                   &up_node);
+                   &left_node,
+                   &right_node);
 
-    MPI_Type_vector(local_M+2, 1, 0, MPI_DOUBLE, &row);
+    MPI_Type_contiguous(local_N + 2, MPI_DOUBLE, &row);
     MPI_Type_commit(&row);
-    MPI_Sendrecv(temp[0] + indexing_address_T(0,1),
-                 1,
-                 row,
-                 down_node,
-                 0,
-                 temp[0] + indexing_address_T(0, local_N+1),
+    MPI_Type_vector(local_M + 2, 1, local_N + 2, MPI_DOUBLE, &column);
+    MPI_Type_commit(&column);
+
+    MPI_Sendrecv(temp[0] + indexing_address_T(0, 1),
                  1,
                  row,
                  up_node,
+                 0,
+                 temp[0] + indexing_address_T(0, local_N + 1),
+                 1,
+                 row,
+                 down_node,
                  0,
                  cartesian_communicator,
                  MPI_STATUS_IGNORE);
@@ -199,27 +204,42 @@ void border_exchange(void)
     MPI_Sendrecv(temp[0] + indexing_address_T(0, local_N),
                  1,
                  row,
+                 down_node,
+                 1,
+                 temp[0],
+                 1,
+                 row,
                  up_node,
                  1,
-                 temp[0], 
-                 1, 
-                 row, 
-                 down_node, 
-                 1, 
-                 cartesian_communicator, 
+                 cartesian_communicator,
                  MPI_STATUS_IGNORE);
 
-    MPI_Type_vector(local_N+2, 1, local_M+2, MPI_DOUBLE, &column);
-    MPI_Type_commit(&column);
+    MPI_Sendrecv(temp[0] + indexing_address_T(1, 0),
+                 1,
+                 column,
+                 left_node,
+                 2,
+                 temp[0] + indexing_address_T(local_N+1, 0),
+                 1,
+                 column,
+                 right_node,
+                 2,
+                 cartesian_communicator, MPI_STATUS_IGNORE);
+    MPI_Sendrecv(temp[0] + indexing_address_T(local_N, 0),
+                 1,
+                 column,
+                 right_node,
+                 3,
+                 temp[0],
+                 1,
+                 column,
+                 left_node,
+                 3,
+                 cartesian_communicator, MPI_STATUS_IGNORE);
 
-
-        MPI_Sendrecv(temp[0] + local_M, 1, column, right_node, 2, temp[0], 1, column, left_node, 2, 
-        cartesian_communicator, MPI_STATUS_IGNORE);
-        MPI_Sendrecv(temp[0]+1 , 1, column, left_node, 3, temp[0]+local_M+1, 1, column, right_node, 3, 
-        cartesian_communicator, MPI_STATUS_IGNORE);
-
-        
-}       
+//    real_t after = T(1, local_N +1);
+//    printf("before %f after %f rank %d\n", before, after, rank);
+}
 
 void boundary_condition(void)
 {
@@ -227,20 +247,23 @@ void boundary_condition(void)
     // to match the cartesian topology. communicate with above/below, right/left,
     // use built in handling of sending messages to places outside bounds of plane.
     // get subgrids that are at the borders, do the thing
+    int location_in_grid[2];
 
     int left_node, right_node, up_node, down_node;
 
     MPI_Cart_shift(cartesian_communicator,
                    0,
                    1,
-                   &left_node,
-                   &right_node);
+                   &up_node,
+                   &down_node);
 
     MPI_Cart_shift(cartesian_communicator,
                    1,
                    1,
-                   &down_node,
-                   &up_node);
+                   &left_node,
+                   &right_node);
+
+    MPI_Cart_coords(cartesian_communicator, rank, 2, location_in_grid);
 
     if (left_node == MPI_PROC_NULL)
     {
@@ -256,20 +279,21 @@ void boundary_condition(void)
             T(local_N + 1, y) = T(local_N - 1, y);
         }
     }
-    if (up_node == MPI_PROC_NULL)
+    if (down_node == MPI_PROC_NULL)
     {
         for (int_t x = 1; x <= local_N; x++)
         {
             T(x, local_M + 1) = T(x, local_M - 1);
         }
     }
-    if (down_node == MPI_PROC_NULL)
+    if (up_node == MPI_PROC_NULL)
     {
         for (int_t x = 1; x <= local_N; x++)
         {
             T(x, 0) = T(x, 2);
         }
     }
+    // printf(" rank: %d, l r u d  %d %d %d %d \n", rank, left_node, right_node, up_node, down_node );
 }
 
 void domain_init(void)
@@ -281,7 +305,7 @@ void domain_init(void)
     // Hint: you can get useful information from the cartesian communicator.
     // Note: you are allowed to assume that the grid size is divisible by
     // the number of processes.
-    int location_in_grid[2],
+    int
         offset_M,
         offset_N;
     MPI_Cart_coords(cartesian_communicator, rank, 2, location_in_grid);
@@ -289,6 +313,8 @@ void domain_init(void)
     local_N = N / dimensions[1];
     offset_M = local_M * location_in_grid[0];
     offset_N = local_N * location_in_grid[1];
+    printf("offm, %d, offn, %d \n", offset_M, offset_N);
+    printf("locm, locn: %d, %d \n", location_in_grid[0], location_in_grid[1]);
 
     temp[0] = malloc((local_M + 2) * (local_N + 2) * sizeof(real_t));
     temp[1] = malloc((local_M + 2) * (local_N + 2) * sizeof(real_t));
@@ -319,7 +345,6 @@ void domain_save(int_t iteration)
         offset_N;
 
     MPI_Cart_coords(cartesian_communicator, rank, 2, location_in_grid);
-    printf("%d, %d", location_in_grid[1], location_in_grid[0]);
     offset_M = local_M * location_in_grid[0];
     offset_N = local_N * location_in_grid[1];
 
@@ -327,14 +352,13 @@ void domain_save(int_t iteration)
     int local_size[2] = {local_M, local_N};
     int local_origin[2] = {offset_M, offset_N};
     int local_size_with_halo[2] = {local_M + 2, local_N + 2};
-    int origin_for_values_within_halo[2] = {1,1};
+    int origin_for_values_within_halo[2] = {1, 1};
 
     MPI_Datatype values_without_halo;
     MPI_Type_create_subarray(
         2, local_size_with_halo, local_size, origin_for_values_within_halo,
         MPI_ORDER_C, MPI_DOUBLE, &values_without_halo);
     MPI_Type_commit(&values_without_halo);
-
 
     int_t index = iteration / snapshot_frequency;
     char filename[256];
@@ -345,19 +369,15 @@ void domain_save(int_t iteration)
     MPI_File file;
 
 
-    // MPI_Type_contiguous((local_M) * (local_N), values_without_halo, &custom_data_type);
-    // MPI_Type_commit(&custom_data_type);
-
-    MPI_Type_create_subarray(
-        2, global_size, local_size, local_origin,
+    MPI_Type_create_subarray(2, global_size, local_size, local_origin,
         MPI_ORDER_C, MPI_DOUBLE, &writable_area);
     MPI_Type_commit(&writable_area);
 
-    if (MPI_File_open(cartesian_communicator, filename, mode, MPI_INFO_NULL, &file) != MPI_SUCCESS)
+    if (MPI_File_open(MPI_COMM_WORLD, filename, mode, MPI_INFO_NULL, &file) != MPI_SUCCESS)
     {
         printf("[MPI process %d] Failure in opening the file.\n", rank);
 
-        MPI_Abort(cartesian_communicator, EXIT_FAILURE);
+        MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
 
     MPI_File_set_view(

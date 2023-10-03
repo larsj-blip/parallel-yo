@@ -5,7 +5,7 @@ echo "--------------------------------------------------------------------------
 echo "M: 256, N: 256, max iteration: 100000, snapshot frequency: 10000"
 echo "--------------------------------------------------------------------------------"
 echo
-for i in 2 4 8
+for i in 1 2 4 8
 do
     echo "Running with $i processes:"
     mpirun -n $i --oversubscribe ./parallel 1>/dev/null
